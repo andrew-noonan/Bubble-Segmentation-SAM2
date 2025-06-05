@@ -111,11 +111,11 @@ If you're already using Linux, skip WSL setup and start here:
 
 ## Download SAM2 Model Weights
 
-1. **Manually download SAM2 weights and config** ([checkpoints list here](https://github.com/facebookresearch/sam2#download-checkpoints)):
+1. **Manually download SAM2 weights and config** ([linked here](https://github.com/facebookresearch/sam2#download-checkpoints)):
 
 Example (Tiny model):
-- [sam2.1_hiera_tiny.pt](https://dl.fbaipublicfiles.com/sam2/sam2.1_hiera_tiny.pt)
-- [sam2.1_hiera_t.yaml](https://raw.githubusercontent.com/facebookresearch/sam2/main/configs/sam2.1/sam2.1_hiera_t.yaml)
+- sam2.1_hiera_tiny.pt
+- sam2.1_hiera_t.yaml
 
 2. **Place them in the following directory:**
 ```
@@ -143,6 +143,3 @@ You can modify the image path, model config, and other options in `src/config.py
 - This project is designed to run entirely inside Linux (native or WSL) for compatibility with PyTorch and SAM2.
 - GPU acceleration with CUDA is supported in WSL2 if NVIDIA drivers are properly installed.
 
----
-
-Let us know if you’d like a Docker version or pre-built Colab script for cloud use!
