@@ -8,3 +8,9 @@ __pycache__/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Don't upload weights
+sam_model/
+sam2/
+checkpoints/
+*.pt

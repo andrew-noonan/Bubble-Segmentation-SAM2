@@ -1,145 +1,78 @@
-# Bubble Segmentation in Viscous Fluids using SAM2 and Classical Edge Refinement
+# SAM2 Image Segmentation for Google Colab
 
-This repository contains a hybrid segmentation pipeline for detecting microbubbles (5–100+ px diameter) in flows using Meta's Segment Anything Model (SAM2) and Canny edge detection with focus filtering.
+This repository provides a simple interface to use the Segment Anything Model 2 (SAM2) from Meta AI in Google Colab. It's designed to be easy to use and integrate into your Jupyter notebooks.
 
 ## Features
-- Automatic bubble region segmentation with SAM2
-- Sharpness-based filtering using Laplacian or Sobel
-- Canny edge refinement for boundary accuracy
-- Batch processing for large frame datasets
 
----
+- Easy-to-use helper functions for SAM2 model
+- Support for both point and box prompts
+- Automatic GPU detection and utilization
+- Simple visualization tools
+- Google Colab ready
 
-# Installation Instructions
+## Quick Start in Google Colab
 
-## For Windows Users: Using WSL (Windows Subsystem for Linux)
-
-If you're on Windows, it is recommended to use Ubuntu via WSL for full compatibility with SAM2, PyTorch, and CUDA.
-
-### Step-by-Step Setup (First-Time Only)
-
-1. **Install WSL and Ubuntu**
-   ```powershell
-   wsl --install
-   ```
-   - Reboot your machine when prompted.
-   - Launch “Ubuntu” from the Start Menu and complete the setup.
-
-2. **Install Python & Tools inside Ubuntu**
-   ```bash
-   sudo apt update && sudo apt upgrade -y
-   sudo apt install python3 python3-venv python3-pip git build-essential -y
-   ```
-
-3. **Clone This Repository**
-   ```bash
-   cd ~
-   git clone https://github.com/yourusername/bubble-segmentation.git
-   cd bubble-segmentation
-   ```
-
-4. **Create and Activate Virtual Environment**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   ```
-
-5. **Install Required Python Packages**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-6. **Clone and Install Meta's SAM2 Repository**
-   ```bash
-   cd ~
-   git clone https://github.com/facebookresearch/sam2.git
-   cd sam2
-   pip install -e .
-   ```
-
-7. **Return to Your Project Directory**
-   ```bash
-   cd ~/bubble-segmentation
-   ```
-
-8. **(Optional) Open the Project in VS Code**
-   If you have the [Remote - WSL extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-wsl):
-   ```bash
-   code .
-   ```
-
----
-
-## For Native Linux Users (Ubuntu 20.04+, Debian, etc.)
-
-If you're already using Linux, skip WSL setup and start here:
-
-1. **Install Python and Tools**
-   ```bash
-   sudo apt update && sudo apt upgrade -y
-   sudo apt install python3 python3-venv python3-pip git build-essential -y
-   ```
-
-2. **Clone This Repository**
-   ```bash
-   cd ~
-   git clone https://github.com/yourusername/bubble-segmentation.git
-   cd bubble-segmentation
-   ```
-
-3. **Create and Activate Virtual Environment**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   ```
-
-4. **Install Required Python Packages**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-5. **Clone and Install Meta's SAM2 Repository**
-   ```bash
-   cd ~
-   git clone https://github.com/facebookresearch/sam2.git
-   cd sam2
-   pip install -e .
-   cd ~/bubble-segmentation
-   ```
-
----
-
-## Download SAM2 Model Weights
-
-1. **Manually download SAM2 weights and config** ([linked here](https://github.com/facebookresearch/sam2#download-checkpoints)):
-
-Example (Tiny model):
-- sam2.1_hiera_tiny.pt
-- sam2.1_hiera_t.yaml
-
-2. **Place them in the following directory:**
-```
-bubble-segmentation/
-└── sam_model/
-    ├── sam2.1_hiera_tiny.pt
-    └── sam2.1_hiera_t.yaml
+1. Open a new Google Colab notebook
+2. Install the required packages:
+```python
+!pip install -q transformers torch torchvision numpy opencv-python matplotlib Pillow ipywidgets tqdm
 ```
 
----
-
-## Running the Pipeline
-
-Once installed, you can run the bubble segmentation pipeline on a test frame:
-```bash
-python run_pipeline.py
+3. Clone this repository:
+```python
+!git clone https://github.com/yourusername/Bubble-Segmentation-SAM2.git
+%cd Bubble-Segmentation-SAM2
 ```
 
-You can modify the image path, model config, and other options in `src/config.py`.
+4. Import the helper class:
+```python
+import sys
+sys.path.append('src')
+from sam_utils import SAM2Helper
+```
 
----
+5. Initialize the helper:
+```python
+sam_helper = SAM2Helper()  # Automatically uses GPU if available
+```
 
-## Notes
+## Usage Examples
 
-- This project is designed to run entirely inside Linux (native or WSL) for compatibility with PyTorch and SAM2.
-- GPU acceleration with CUDA is supported in WSL2 if NVIDIA drivers are properly installed.
+### Loading and Processing Images
+
+```python
+# Load an image
+image = sam_helper.load_image("path_to_your_image.jpg")
+
+# Process image with point prompts
+points = torch.tensor([[[x, y, 1]]])  # 1 for foreground, 0 for background
+masks = sam_helper.generate_mask(image, points=points)
+
+# Process image with box prompts
+boxes = torch.tensor([[[x1, y1, x2, y2]]])
+masks = sam_helper.generate_mask(image, boxes=boxes)
+
+# Visualize results
+sam_helper.visualize_mask(image, masks[0])
+```
+
+## Example Notebook
+
+Check out the `examples/sam2_demo.ipynb` notebook for a complete demonstration of the library's features.
+
+## Requirements
+
+- Python 3.8+
+- PyTorch 2.0+
+- Transformers 4.30+
+- Other dependencies listed in requirements.txt
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Meta AI for the SAM2 model
+- Hugging Face for the transformers library
 
