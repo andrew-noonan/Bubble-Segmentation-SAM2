@@ -2,3 +2,11 @@ streamlit>=1.30.0
 opencv-python-headless>=4.9.0.80
 matplotlib>=3.8.0
 numpy>=1.24
+cv2
+numpy
+scipy.ndimage
+skimage.measure
+ast
+pandas
+importlib
+sklearn
