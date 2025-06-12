@@ -80,3 +80,33 @@ def plot_mask_stages(image, masks_dict, props, title_prefix=""):
     plt.tight_layout()
     plt.show()
 
+def visualize_prompts_on_image(image: np.ndarray,
+                               boxes: list[list[int]],
+                               points_for_box: list[list[tuple[float, float]]]):
+    """
+    Display the image with bounding boxes and prompt points overlaid.
+
+    Args:
+      image: HxWxC or HxW numpy array
+      boxes: list of [x0, y0, x1, y1]
+      points_for_box: list of lists of (x, y) points inside each box
+    """
+    fig, ax = plt.subplots(figsize=(8, 8))
+    # show image
+    if image.ndim == 2:
+        ax.imshow(image, cmap='gray')
+    else:
+        ax.imshow(image)
+    # draw boxes
+    for (x0, y0, x1, y1) in boxes:
+        rect = plt.Rectangle((x0, y0), x1-x0, y1-y0,
+                             edgecolor='yellow', facecolor='none', linewidth=1)
+        ax.add_patch(rect)
+    # draw points
+    for pts in points_for_box:
+        xs = [pt[0] for pt in pts]
+        ys = [pt[1] for pt in pts]
+        ax.scatter(xs, ys, marker='+', color='red', s=20)
+    ax.set_title("Boxes and Prompt Points")
+    ax.axis('off')
+    plt.show()
