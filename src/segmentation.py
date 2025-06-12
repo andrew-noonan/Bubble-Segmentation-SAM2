@@ -24,7 +24,7 @@ def generate_boxes_and_points(image, sobel_mag, edge_thresh=0.95, min_contour_le
         points_for_box.append([(cx, cy)])
     return boxes, points_for_box
 
-def multi_scale_box_masks(predictor, image, box, point):
+def multi_scale_box_masks(predictor, image, box, point, pad_ratios):
     H, W = image.shape[:2]
     masks, ious, logits_all = [], [], []
     for pr in pad_ratios:
