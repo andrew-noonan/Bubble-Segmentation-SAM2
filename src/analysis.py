@@ -5,7 +5,7 @@ from scipy.stats import lognorm, norm
 from skimage.measure import regionprops, label
 import ast
 from sklearn.metrics import r2_score
-
+import cv2
 def compute_props(masks):
     props = []
     for m in masks:
