@@ -10,7 +10,7 @@ def sobel_edge(image):
     sobel_mag = np.sqrt(sobel_x**2 + sobel_y**2)
     return (sobel_mag / sobel_mag.max() * 255).astype(np.uint8)
 
-def generate_boxes_and_points(image, sobel_mag, edge_thresh=0.9):
+def generate_boxes_and_points(image, sobel_mag, edge_thresh=0.95, min_contour_len=10):
     _, edge_mask = cv2.threshold(sobel_mag, edge_thresh, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(edge_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     H, W = image.shape[:2]
