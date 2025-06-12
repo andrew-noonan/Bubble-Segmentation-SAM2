@@ -1,3 +1,6 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
 def plot_detected_circles(image, properties, circularity_thresh=0.6):
     """
     Plots a side-by-side comparison of:
