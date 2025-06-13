@@ -114,24 +114,35 @@ if "selected_path" in st.session_state:
     selected_path = st.session_state["selected_path"]
     summary_path = os.path.join(selected_path, "experiment_summary.csv")
     sam_data = {}
+
+    # --- Step 4: Load SAM summary ---
+    UM_PER_PIXEL = 5.77  # update if needed
+
+    # --- Step 4: Load SAM summary ---
     if os.path.isfile(summary_path):
         try:
             df = pd.read_csv(summary_path)
+
+            log_mu_pixels = float(df["log_mu"].values[0])
+            log_sigma = float(df["log_sigma"].values[0])
+            scale = UM_PER_PIXEL
+
             sam_data = {
                 "Count": int(df["count"].values[0]),
-                "D32": float(df["d32"].values[0]),
-                "D_v (D30)": float(df["dv"].values[0]),
-                "LogMu": float(df["log_mu"].values[0]),
-                "LogSigma": float(df["log_sigma"].values[0]),
+                "D32": float(df["d32"].values[0]) * scale,
+                "D_v": float(df["dv"].values[0]) * scale,
+                "LogMu": log_mu_pixels + np.log(scale),
+                "LogSigma": log_sigma,
             }
         except Exception as e:
             st.error(f"Error reading SAM summary: {e}")
     else:
-        st.warning("experiment_summary.csv not found.")
+        st.warning("SAM summary (experiment_summary.csv) not found.")
 
     # --- Step 5: Load MATLAB parameters ---
     mat_path = os.path.join(selected_path, "MATLAB Results", "lognormal_fit_params2.mat")
     mat_data = {}
+
     if os.path.isfile(mat_path):
         try:
             mat = loadmat(mat_path)
@@ -143,40 +154,80 @@ if "selected_path" in st.session_state:
                         "LogMu": safe_get_scalar(logdata, 'mu'),
                         "LogSigma": safe_get_scalar(logdata, 'sigma'),
                         "D32": safe_get_scalar(logdata, 'SauterMeanDiameter'),
-                        "D_v (D30)": safe_get_scalar(logdata, 'D_v'),
+                        "D_v": safe_get_scalar(logdata, 'D_v'),
                     }
         except Exception as e:
             st.error(f"Error reading MATLAB file: {e}")
     else:
         st.warning("MATLAB lognormal_fit_params2.mat not found.")
 
-    # --- Step 6: Side-by-side comparison ---
+    # --- Step 6: Display comparison ---
+    def format_with_units(df: pd.DataFrame) -> pd.DataFrame:
+        renamed = df.rename(index={
+            "D32": "D32 (µm)",
+            "D_v": "D_v (D30, µm)",
+            "LogMu": "LogMu (µm)",
+            "LogSigma": "LogSigma",
+            "Count": "Count"
+        })
+        return renamed
+
     if sam_data and mat_data:
         st.subheader("📈 Comparison: SAM2 vs MATLAB")
         comparison_df = pd.DataFrame({
             "SAM2": sam_data,
             "MATLAB": mat_data
         })
-        st.dataframe(comparison_df.round(1))
+        st.dataframe(format_with_units(comparison_df).round(1))
 
-# --- Step 5: Viewer logic ---
+    elif sam_data:
+        st.subheader("📈 SAM2 Summary Only")
+        df = pd.DataFrame(sam_data, index=["SAM2"]).T
+        st.dataframe(format_with_units(df).round(1))
+
+    elif mat_data:
+        st.subheader("📈 MATLAB Summary Only")
+        df = pd.DataFrame(mat_data, index=["MATLAB"]).T
+        st.dataframe(format_with_units(df).round(1))
+
+    else:
+        st.info("No summary data found from either SAM2 or MATLAB.")
+
+
 # --- Step 5: Viewer logic ---
 if "selected_path" in st.session_state:
     selected_path = st.session_state["selected_path"]
     norm_path = os.path.join(selected_path, "3 - Normalized")
     sam2_path = os.path.join(selected_path, "per_frame_props.json")
-    matlab_path = os.path.join(selected_path, "MATLAB Results", "experiment_data_reviewed.mat")
+    #matlab_path = os.path.join(selected_path, "MATLAB Results", "experiment_data_reviewed.mat")
+    matlab_path = os.path.join(selected_path, "MATLAB Results", "raw_frame_data.mat")
 
-    if not os.path.isfile(sam2_path) or not os.path.isfile(matlab_path):
-        st.warning("Missing overlay data.")
+    sam2_data = None
+    frame_data = None
+
+    # Load SAM2 data if present
+    if os.path.isfile(sam2_path):
+        sam2_data = load_sam2_json(os.path.normpath(sam2_path))
+    else:
+        st.warning("SAM2 overlay data not found. Skipping SAM overlay.")
+
+    # Load MATLAB data if present
+    if os.path.isfile(matlab_path):
+        mat_data = loadmat(os.path.normpath(matlab_path))
+        #frame_data = mat_data["frameData_Reviewed"]
+        frame_data = mat_data["frameData"]
+    else:
+        st.warning("MATLAB overlay data not found. Skipping MATLAB overlay.")
+
+    # Derive available frames from whichever source is present
+    if sam2_data:
+        frame_files = sorted(sam2_data.keys())
+    elif frame_data is not None:
+        frame_files = [f"Frame_{int(frame_data[0, i]['frameNumber'])}.png" for i in range(frame_data.shape[1])]
+    else:
+        st.error("No valid overlay data found.")
         st.stop()
 
-    # Load data
-    sam2_data = load_sam2_json(os.path.normpath(sam2_path))
-    mat_data = loadmat(os.path.normpath(matlab_path))
-    frame_data = mat_data["frameData_Reviewed"]
-
-    frame_files = sorted(sam2_data.keys())
     if not frame_files:
         st.error("No frame data found.")
         st.stop()
@@ -185,10 +236,7 @@ if "selected_path" in st.session_state:
     if "frame_index" not in st.session_state:
         st.session_state.frame_index = 0
 
-
-    # Slider
     st.session_state.frame_index = st.slider("Frame #", 0, len(frame_files) - 1, st.session_state.frame_index)
-
     frame_name = frame_files[st.session_state.frame_index]
     image_path = os.path.normpath(os.path.join(norm_path, frame_name))
     if not os.path.isfile(image_path):
@@ -197,8 +245,9 @@ if "selected_path" in st.session_state:
 
     image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
 
-    # Prepare MATLAB circle data
     def get_matlab_circles(frame_name):
+        if frame_data is None:
+            return []
         frame_match = re.search(r"Frame_(\d+)\.png", frame_name)
         if not frame_match:
             return []
@@ -216,32 +265,33 @@ if "selected_path" in st.session_state:
                 ]
         return []
 
-    matlab_circles = get_matlab_circles(frame_name)
-    sam_circles = [(tuple(ann["centroid"]), ann["diameter"]) for ann in sam2_data.get(frame_name, [])]
+    sam_circles = []
+    if sam2_data and frame_name in sam2_data:
+        sam_circles = [(tuple(ann["centroid"]), ann["diameter"]) for ann in sam2_data[frame_name]]
 
-    # Plot 2 subplots: SAM and MATLAB overlays
+    matlab_circles = get_matlab_circles(frame_name)
+
+    # --- Plot overlays ---
     fig, axs = plt.subplots(1, 2, figsize=(16, 8))
     titles = ["SAM2 Overlay", "MATLAB Overlay"]
-
     for ax, title in zip(axs, titles):
         ax.imshow(image)
         ax.set_title(f"{title}\n{frame_name}")
         ax.axis("off")
 
-    # --- SAM circles (lime, dotted) ---
-    for (y, x), d in sam_circles:
-        circle = plt.Circle((x, y), d / 2, color="red", fill=False, linewidth=2.0, linestyle=":")
-        axs[0].add_patch(circle)
+    if sam_circles:
+        for (y, x), d in sam_circles:
+            circle = plt.Circle((x, y), d / 2, color="blue", fill=True, linewidth=0.7, alpha=0.2)
+            axs[0].add_patch(circle)
 
-    # --- MATLAB circles (blue, dotted) ---
-    for (x, y), d in matlab_circles:
-        circle = plt.Circle((x, y), d / 2, color="blue", fill=False, linewidth=2.0, linestyle=":")
-        axs[1].add_patch(circle)
-
+    if matlab_circles:
+        for (x, y), d in matlab_circles:
+            circle = plt.Circle((x, y), d / 2, color="red", fill=True, linewidth=0.7, alpha=0.2)
+            axs[1].add_patch(circle)
 
     st.pyplot(fig)
 
-    # Navigation buttons
+    # --- Navigation ---
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
         if st.button("⬅️ Prev") and st.session_state.frame_index > 0:
