@@ -72,6 +72,9 @@ def scan_valid_directories(base_dir):
         flows.add(flow)
     return sorted(angles), sorted(temps), sorted(aerations), sorted(trials), sorted(flows)
 
+
+# --- Interface Controls ---
+continuous = False
 # --- UI Setup ---
 st.title("🔬 Experiment Viewer")
 
@@ -197,7 +200,10 @@ if "selected_path" in st.session_state:
 # --- Step 5: Viewer logic ---
 if "selected_path" in st.session_state:
     selected_path = st.session_state["selected_path"]
-    norm_path = os.path.join(selected_path, "3 - Normalized")
+    if continuous:
+        norm_path = os.path.join(selected_path, "3a - Normalized Continuous")
+    else:
+        norm_path = os.path.join(selected_path, "3 - Normalized")
     sam2_path = os.path.join(selected_path, "per_frame_props.json")
     #matlab_path = os.path.join(selected_path, "MATLAB Results", "experiment_data_reviewed.mat")
     matlab_path = os.path.join(selected_path, "MATLAB Results", "raw_frame_data.mat")
@@ -301,3 +307,64 @@ if "selected_path" in st.session_state:
             st.session_state.frame_index += 1
 else:
     st.info("📂 Select an experiment to begin.")
+
+
+# --- Step 6: Export GIF ---
+st.subheader("🎞️ Export GIF")
+
+overlay_choice = st.radio("Overlay Type", ["SAM2", "MATLAB"], horizontal=True)
+export_gif = st.button("Generate and Download GIF")
+
+if export_gif:
+    import imageio.v2 as imageio
+    from tempfile import TemporaryDirectory
+
+    if continuous:
+        norm_path = os.path.join(st.session_state["selected_path"], "3a - Normalized Continuous")
+    else:
+        norm_path = os.path.join(st.session_state["selected_path"], "3 - Normalized")
+
+    output_frames = []
+    max_frames = 50  # Limit to avoid memory issues
+
+    with st.spinner("Generating GIF..."):
+        for i, frame_name in enumerate(frame_files[:max_frames]):
+            image_path = os.path.join(norm_path, frame_name)
+            if not os.path.isfile(image_path):
+                continue
+
+            img = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+            fig, ax = plt.subplots(figsize=(8, 6.4), dpi=160)
+            ax.imshow(img)
+            ax.axis("off")
+
+            # Remove all white space around image
+            fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+            if overlay_choice == "SAM2" and sam2_data and frame_name in sam2_data:
+                for (y, x), d in [(tuple(ann["centroid"]), ann["diameter"]) for ann in sam2_data[frame_name]]:
+                    ax.add_patch(
+                        plt.Circle((x, y), d / 2, edgecolor="blue", facecolor="blue", linewidth=1.2, alpha=0.2)
+                    )
+
+            elif overlay_choice == "MATLAB" and frame_data is not None:
+                matlab_circles = get_matlab_circles(frame_name)
+                for (x, y), d in matlab_circles:
+                    ax.add_patch(plt.Circle((x, y), d / 2, color="red", fill=True, alpha=0.3))
+
+            # Save frame
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            frame = np.frombuffer(renderer.buffer_rgba(), dtype=np.uint8)
+            frame = frame.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+            frame_rgb = frame[:, :, :3]
+            output_frames.append(frame_rgb)
+            plt.close(fig)
+
+
+        # Save GIF
+        with TemporaryDirectory() as tmpdir:
+            gif_path = os.path.join(tmpdir, "bubbles_overlay.gif")
+            imageio.mimsave(gif_path, output_frames, fps=4)
+            with open(gif_path, "rb") as f:
+                st.download_button("📥 Download GIF", f, file_name="bubbles_overlay.gif", mime="image/gif")
