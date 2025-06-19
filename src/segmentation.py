@@ -3,10 +3,10 @@ import numpy as np
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops, label
 
-def sobel_edge(image):
+def sobel_edge(image, ksize=9):
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=9)
-    sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=9)
+    sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize)
+    sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize)
     sobel_mag = np.sqrt(sobel_x**2 + sobel_y**2)
     return (sobel_mag / sobel_mag.max() * 255).astype(np.uint8)
 

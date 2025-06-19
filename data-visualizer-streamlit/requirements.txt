@@ -6,3 +6,4 @@ opencv-python-headless
 cv2
 matplotlib
 imageio
+scikit-learn
