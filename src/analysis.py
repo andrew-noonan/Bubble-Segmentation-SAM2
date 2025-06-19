@@ -6,7 +6,7 @@ from skimage.measure import regionprops, label
 import ast
 from sklearn.metrics import r2_score
 import cv2
-def compute_props(masks):
+def compute_props(masks,diamOffsetProps=2):
     props = []
     for m in masks:
         if m.sum() == 0: continue
@@ -18,7 +18,7 @@ def compute_props(masks):
         reg = regionprops(label(m))[0]
         props.append({
             'centroid': reg.centroid,
-            'diameter': 2 * np.sqrt(m.sum() / np.pi),
+            'diameter': 2 * np.sqrt(m.sum() / np.pi)-diamOffsetProps,
             'circularity': circularity
         })
     return props
