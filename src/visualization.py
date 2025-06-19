@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-def plot_detected_circles(image, properties, circularity_thresh=0.6):
+def plot_detected_circles(image, properties, circularity_thresh=0.6, diamOffset = 4):
     """
     Plots a side-by-side comparison of:
     - Original image
@@ -20,7 +20,7 @@ def plot_detected_circles(image, properties, circularity_thresh=0.6):
     else:
         image_rgb = image.copy()
 
-    fig, axs = plt.subplots(1, 2, figsize=(16, 8))
+    fig, axs = plt.subplots(1, 2, figsize=(18, 9))
 
     # Original image
     axs[0].imshow(image_rgb)
@@ -33,7 +33,7 @@ def plot_detected_circles(image, properties, circularity_thresh=0.6):
         if prop['circularity'] >= circularity_thresh:
             y, x = prop['centroid']
             r = prop['diameter'] / 2
-            circle = plt.Circle((x, y), r, edgecolor='cyan', fill=False, linewidth=0.7)
+            circle = plt.Circle((x, y), r-diamOffset/2, edgecolor='cyan', fill=False, linewidth=0.5)
             axs[1].add_patch(circle)
             axs[1].plot(x, y, 'r.', markersize=3)
 
