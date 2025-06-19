@@ -23,8 +23,8 @@ def compute_props(masks,diamOffsetProps=2):
         })
     return props
 
-def summarize_props(props):
-    diameters = [p['diameter'] for p in props if p['circularity'] >= 0.7]
+def summarize_props(props, circularity_thresh = 0.6):
+    diameters = [p['diameter'] for p in props if p['circularity'] >= circularity_thresh]
     if len(diameters) == 0:
         return {"count": 0}
 
