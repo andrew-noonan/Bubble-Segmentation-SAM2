@@ -166,7 +166,6 @@ def watershed_split(mask, peak_filter_size=9, min_region_area=200, max_region_ar
         noise_threshold: Threshold for peak detection relative to max distance
     """
     from scipy import ndimage
-    from skimage.feature import peak_local_maxima
     from skimage.measure import regionprops, label
     from skimage.morphology import erosion, disk
 
@@ -182,47 +181,62 @@ def watershed_split(mask, peak_filter_size=9, min_region_area=200, max_region_ar
     # Normalize distance transform
     if dist.max() == 0:
         return []
-    dist_norm = dist / dist.max()
     
-    # More sophisticated peak detection
-    # Method 1: Use peak_local_maxima for better control
-    peak_coords = peak_local_maxima(
-        dist, 
-        min_distance=min_distance,
-        threshold_abs=noise_threshold * dist.max(),
-        exclude_border=True
-    )
+    # Custom peak detection using local maxima filtering
+    # Apply maximum filter and find where original equals filtered (these are peaks)
+    local_maxima = ndimage.maximum_filter(dist, size=peak_filter_size) == dist
+    local_maxima &= smoothed_mask  # Only consider peaks inside the mask
+    local_maxima &= (dist > noise_threshold * dist.max())  # Threshold for significance
     
+    # Find peak coordinates
+    peak_coords = np.where(local_maxima)
     if len(peak_coords[0]) < 2:
         # Fallback: Try with more relaxed parameters
-        peak_coords = peak_local_maxima(
-            dist,
-            min_distance=max(5, min_distance // 2),
-            threshold_abs=noise_threshold * 0.5 * dist.max(),
-            exclude_border=True
-        )
+        local_maxima = ndimage.maximum_filter(dist, size=max(3, peak_filter_size // 2)) == dist
+        local_maxima &= smoothed_mask
+        local_maxima &= (dist > noise_threshold * 0.5 * dist.max())
+        peak_coords = np.where(local_maxima)
     
     if len(peak_coords[0]) < 2:
         return []
     
-    # Create markers from peaks
+    # Filter peaks by minimum distance
+    peak_list = list(zip(peak_coords[0], peak_coords[1]))
+    filtered_peaks = []
+    
+    for y, x in peak_list:
+        # Check if this peak is far enough from already selected peaks
+        too_close = False
+        for fy, fx in filtered_peaks:
+            if np.sqrt((y - fy)**2 + (x - fx)**2) < min_distance:
+                # Compare peak strengths and keep the stronger one
+                if dist[y, x] <= dist[fy, fx]:
+                    too_close = True
+                    break
+                else:
+                    # Remove the weaker peak
+                    filtered_peaks.remove((fy, fx))
+                    break
+        
+        if not too_close:
+            filtered_peaks.append((y, x))
+    
+    if len(filtered_peaks) < 2:
+        return []
+    
+    # Create markers from filtered peaks
     markers = np.zeros_like(mask, dtype=np.int32)
-    for i, (y, x) in enumerate(zip(peak_coords[0], peak_coords[1])):
-        if mask[y, x]:  # Only place markers inside the mask
-            markers[y, x] = i + 1
+    for i, (y, x) in enumerate(filtered_peaks):
+        markers[y, x] = i + 1
     
     # Expand markers slightly to ensure they're well-defined
     markers = ndimage.maximum_filter(markers, size=3)
     
-    num_peaks = len(peak_coords[0])
+    num_peaks = len(filtered_peaks)
     if num_peaks < 2:
         return []
     
-    # Apply watershed with inverted distance as "elevation"
-    # Invert distance so peaks become valleys for watershed
-    elevation = -dist
-    elevation[~mask] = elevation.max() + 1  # Set background to high elevation
-    
+    # Apply watershed
     wshed = cv2.watershed(
         np.stack([mask.astype(np.uint8) * 255] * 3, axis=-1), 
         markers
@@ -295,7 +309,6 @@ def adaptive_watershed_split(mask, expected_bubble_size=None):
         min_distance=min_distance,
         noise_threshold=noise_threshold
     )
-
 
 def filter_contained_masks(anns, containment_thresh=0.9):
     """
