@@ -122,54 +122,179 @@ def multi_scale_box_masks(predictor, image, box, point, pad_ratios):
 
 
 
-def watershed_split(mask, peak_filter_size=15, min_region_area=30, max_region_area=None):
-    from scipy import ndimage
-    from skimage.measure import regionprops, label
-
-    if mask.sum() < min_region_area:
-        return []
-
-    # Distance transform
-    dist = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5)
-
-    # Local maxima
-    local_max = ndimage.maximum_filter(dist, size=peak_filter_size) == dist
-    local_max &= mask
-    markers, num_peaks = ndimage.label(local_max)
-
-    if num_peaks < 2:
-        return []
-
-    # Watershed
-    mask_rgb = np.stack([mask * 255]*3, axis=-1).astype(np.uint8)
-    wshed = cv2.watershed(mask_rgb, markers.astype(np.int32))
-
-    # Extract regions
-    split_masks = []
-    for label_id in np.unique(wshed):
-        if label_id <= 0:
-            continue
-        region = (wshed == label_id)
-        area = region.sum()
-        if area < min_region_area:
-            continue
-        if max_region_area is not None and area > max_region_area:
-            continue
-        split_masks.append(region.astype(bool))
-    return split_masks
-
-
-def should_split(mask, ecc_thresh=0.85, solidity_thresh=0.95):
+def should_split(mask, ecc_thresh=0.8, solidity_thresh=0.85, area_thresh=500):
+    """
+    Improved splitting criteria with multiple checks.
+    
+    Args:
+        mask: Binary mask to evaluate
+        ecc_thresh: Eccentricity threshold (lower = more elongated objects get split)
+        solidity_thresh: Solidity threshold (lower = more concave objects get split)  
+        area_thresh: Minimum area to consider for splitting
+    """
     props = regionprops(label(mask.astype(int)))
     if not props:
         return False
 
     region = props[0]
-    if region.eccentricity > ecc_thresh:
+    
+    # Don't split very small regions
+    if region.area < area_thresh:
         return False
-    if region.solidity > solidity_thresh:
-        return False
-    return True
+    
+    # Split criteria (any one condition triggers split)
+    split_conditions = [
+        region.eccentricity < ecc_thresh,  # Not too elongated
+        region.solidity < solidity_thresh,  # Has concavities/indentations
+        region.area > 2000,  # Large regions are more likely to contain multiple bubbles
+    ]
+    
+    return any(split_conditions)
+
+
+def watershed_split(mask, peak_filter_size=9, min_region_area=200, max_region_area=None, 
+                   min_distance=15, noise_threshold=0.3):
+    """
+    Improved watershed splitting with better peak detection.
+    
+    Args:
+        mask: Binary mask to split
+        peak_filter_size: Size for local maxima detection (smaller = more sensitive)
+        min_region_area: Minimum area for resulting regions
+        max_region_area: Maximum area for resulting regions
+        min_distance: Minimum distance between peaks
+        noise_threshold: Threshold for peak detection relative to max distance
+    """
+    from scipy import ndimage
+    from skimage.feature import peak_local_maxima
+    from skimage.measure import regionprops, label
+    from skimage.morphology import erosion, disk
+
+    if mask.sum() < min_region_area:
+        return []
+
+    # Smooth the mask slightly to reduce noise
+    smoothed_mask = ndimage.binary_closing(mask, structure=disk(2))
+    
+    # Distance transform with better parameters
+    dist = cv2.distanceTransform(smoothed_mask.astype(np.uint8), cv2.DIST_L2, 5)
+    
+    # Normalize distance transform
+    if dist.max() == 0:
+        return []
+    dist_norm = dist / dist.max()
+    
+    # More sophisticated peak detection
+    # Method 1: Use peak_local_maxima for better control
+    peak_coords = peak_local_maxima(
+        dist, 
+        min_distance=min_distance,
+        threshold_abs=noise_threshold * dist.max(),
+        exclude_border=True
+    )
+    
+    if len(peak_coords[0]) < 2:
+        # Fallback: Try with more relaxed parameters
+        peak_coords = peak_local_maxima(
+            dist,
+            min_distance=max(5, min_distance // 2),
+            threshold_abs=noise_threshold * 0.5 * dist.max(),
+            exclude_border=True
+        )
+    
+    if len(peak_coords[0]) < 2:
+        return []
+    
+    # Create markers from peaks
+    markers = np.zeros_like(mask, dtype=np.int32)
+    for i, (y, x) in enumerate(zip(peak_coords[0], peak_coords[1])):
+        if mask[y, x]:  # Only place markers inside the mask
+            markers[y, x] = i + 1
+    
+    # Expand markers slightly to ensure they're well-defined
+    markers = ndimage.maximum_filter(markers, size=3)
+    
+    num_peaks = len(peak_coords[0])
+    if num_peaks < 2:
+        return []
+    
+    # Apply watershed with inverted distance as "elevation"
+    # Invert distance so peaks become valleys for watershed
+    elevation = -dist
+    elevation[~mask] = elevation.max() + 1  # Set background to high elevation
+    
+    wshed = cv2.watershed(
+        np.stack([mask.astype(np.uint8) * 255] * 3, axis=-1), 
+        markers
+    )
+    
+    # Extract and validate regions
+    split_masks = []
+    for label_id in range(1, num_peaks + 1):
+        region_mask = (wshed == label_id)
+        area = region_mask.sum()
+        
+        # Size filtering
+        if area < min_region_area:
+            continue
+        if max_region_area is not None and area > max_region_area:
+            continue
+            
+        # Quality filtering - reject very thin or fragmented regions
+        props = regionprops(label(region_mask.astype(int)))
+        if props:
+            region = props[0]
+            # Reject very elongated or fragmented results
+            if region.eccentricity > 0.95 or region.solidity < 0.5:
+                continue
+                
+        split_masks.append(region_mask.astype(bool))
+    
+    # Only return splits if we got reasonable results
+    if len(split_masks) >= 2:
+        return split_masks
+    else:
+        return []
+
+
+def adaptive_watershed_split(mask, expected_bubble_size=None):
+    """
+    Adaptive watershed that adjusts parameters based on mask properties.
+    """
+    props = regionprops(label(mask.astype(int)))
+    if not props:
+        return []
+    
+    region = props[0]
+    area = region.area
+    
+    # Adapt parameters based on region size and shape
+    if area < 800:
+        # Small regions - more conservative
+        peak_filter_size = 7
+        min_distance = 10
+        noise_threshold = 0.4
+    elif area < 2000:
+        # Medium regions - balanced
+        peak_filter_size = 9
+        min_distance = 15
+        noise_threshold = 0.3
+    else:
+        # Large regions - more aggressive splitting
+        peak_filter_size = 11
+        min_distance = 20
+        noise_threshold = 0.25
+    
+    # Adjust based on expected bubble size if provided
+    if expected_bubble_size is not None:
+        min_distance = max(min_distance, expected_bubble_size // 3)
+    
+    return watershed_split(
+        mask, 
+        peak_filter_size=peak_filter_size,
+        min_distance=min_distance,
+        noise_threshold=noise_threshold
+    )
 
 
 def filter_contained_masks(anns, containment_thresh=0.9):
