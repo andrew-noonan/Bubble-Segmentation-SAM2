@@ -127,7 +127,7 @@ from scipy import ndimage
 from skimage.measure import regionprops, label
 from skimage.morphology import erosion, dilation, disk, remove_small_objects
 from skimage.segmentation import watershed
-from skimage.feature import peak_local_maxima
+from skimage.feature import peak_local_max
 
 
 def improved_watershed_split(mask, peak_filter_size=15, min_region_area=30, max_region_area=None, 
@@ -172,7 +172,7 @@ def improved_watershed_split(mask, peak_filter_size=15, min_region_area=30, max_
         dist = cv2.distanceTransform(mask_clean.astype(np.uint8), cv2.DIST_L2, 5)
 
     # Improved peak detection using skimage's peak_local_maxima
-    peaks = peak_local_maxima(dist, min_distance=min_peak_distance, 
+    peaks = peak_local_max(dist, min_distance=min_peak_distance, 
                              threshold_abs=dist.max() * 0.3,  # Only consider significant peaks
                              exclude_border=3)
     
