@@ -406,3 +406,41 @@ def process_bubbles(masks):
     filtered_anns = smart_filter_contained_masks(anns)
     
     return [ann["segmentation"] for ann in filtered_anns]
+
+
+def filter_contained_masks(anns, containment_thresh=0.9):
+    """
+    Remove masks that are more than containment_thresh contained within another.
+
+    Args:
+        anns: list of dicts with "segmentation" keys
+        containment_thresh: float in (0, 1)
+
+    Returns:
+        Filtered list of annotations
+    """
+    keep = [True] * len(anns)
+    for i, ann_i in enumerate(anns):
+        mask_i = ann_i["segmentation"]
+        area_i = mask_i.sum()
+        for j, ann_j in enumerate(anns):
+            if i == j or not keep[j]:
+                continue
+            mask_j = ann_j["segmentation"]
+            area_j = mask_j.sum()
+
+            intersection = np.logical_and(mask_i, mask_j).sum()
+
+            # Compute % of i inside j and vice versa
+            containment_i = intersection / area_i
+            containment_j = intersection / area_j
+
+            if containment_i > containment_thresh or containment_j > containment_thresh:
+                # Remove the smaller one
+                if area_i < area_j:
+                    keep[i] = False
+                    break
+                else:
+                    keep[j] = False  # j gets removed
+    return [ann for ann, k in zip(anns, keep) if k]
+
