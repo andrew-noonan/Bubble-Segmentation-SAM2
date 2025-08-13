@@ -117,11 +117,10 @@ def should_split(mask, ecc_thresh=0.90, solidity_thresh=0.90):
     should_attempt = any(criteria)
     
     # Debug info - remove this later
-    if should_attempt:
-        print(f"Should split: concavity={region.convex_area/region.area:.2f}, "
-              f"solidity={region.solidity:.2f}, ecc={region.eccentricity:.2f}, "
-              f"extent={region.extent:.2f}, aspect={bbox_aspect:.2f}")
-    
+    #if should_attempt:
+        #print(f"Should split: concavity={region.convex_area/region.area:.2f}, "
+        #      f"solidity={region.solidity:.2f}, ecc={region.eccentricity:.2f}, "
+        #      f"extent={region.extent:.2f}, aspect={bbox_aspect:.2f}")
     return should_attempt
 
 
