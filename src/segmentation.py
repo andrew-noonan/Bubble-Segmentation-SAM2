@@ -9,26 +9,40 @@ from skimage.feature import peak_local_max
 
 def improved_watershed_split(mask, peak_filter_size=15, min_region_area=30, max_region_area=None):
     """
-    Simplified watershed splitting that just works.
+    More aggressive watershed splitting.
     """
     if mask.sum() < min_region_area:
         return []
 
     # Clean up the mask
     mask_clean = mask.astype(np.uint8)
-    mask_clean = remove_small_objects(mask_clean.astype(bool), min_size=min_region_area//4)
+    mask_clean = remove_small_objects(mask_clean.astype(bool), min_size=min_region_area//8)  # Less aggressive cleanup
     
     if mask_clean.sum() < min_region_area:
         return []
 
     # Distance transform
     dist = cv2.distanceTransform(mask_clean.astype(np.uint8), cv2.DIST_L2, 5)
-    dist = cv2.GaussianBlur(dist, (5, 5), 1.0)
+    dist = cv2.GaussianBlur(dist, (3, 3), 0.8)  # Less smoothing to preserve peaks
 
-    # Find peaks
-    peaks = peak_local_max(dist, min_distance=10, threshold_abs=dist.max() * 0.3, exclude_border=3)
+    # More aggressive peak detection
+    peaks = peak_local_max(
+        dist, 
+        min_distance=max(5, min(mask.shape) // 8),  # Adaptive distance based on mask size
+        threshold_abs=dist.max() * 0.2,  # Lower threshold to find more peaks
+        exclude_border=2
+    )
     
-    if len(peaks) < 2:  # Need at least 2 peaks to split
+    if len(peaks) < 2:
+        # Try even more aggressive settings
+        peaks = peak_local_max(
+            dist, 
+            min_distance=3,  # Very close peaks allowed
+            threshold_abs=dist.max() * 0.15,  # Even lower threshold
+            exclude_border=1
+        )
+    
+    if len(peaks) < 2:  # Still need at least 2 peaks
         return []
 
     # Create markers
@@ -45,7 +59,7 @@ def improved_watershed_split(mask, peak_filter_size=15, min_region_area=30, max_
         mask_rgb = np.stack([mask_clean * 255] * 3, axis=-1).astype(np.uint8)
         wshed = cv2.watershed(mask_rgb, markers)
 
-    # Extract regions
+    # Extract regions with relaxed validation
     split_masks = []
     for label_id in np.unique(wshed):
         if label_id <= 0:
@@ -59,17 +73,17 @@ def improved_watershed_split(mask, peak_filter_size=15, min_region_area=30, max_
         if max_region_area is not None and area > max_region_area:
             continue
             
-        # Basic shape validation
+        # More lenient shape validation
         props = regionprops(label(region.astype(int)))
-        if props and props[0].eccentricity < 0.9 and props[0].solidity > 0.7:
+        if props and props[0].eccentricity < 0.95 and props[0].solidity > 0.5:  # More lenient
             split_masks.append(region.astype(bool))
     
     return split_masks
 
 
-def should_split(mask, ecc_thresh=0.85, solidity_thresh=0.85):
+def should_split(mask, ecc_thresh=0.90, solidity_thresh=0.90):
     """
-    Simplified splitting decision - same as your original but better thresholds.
+    More aggressive splitting decision for attached bubbles.
     """
     props = regionprops(label(mask.astype(int)))
     if not props:
@@ -77,12 +91,38 @@ def should_split(mask, ecc_thresh=0.85, solidity_thresh=0.85):
 
     region = props[0]
     
-    # Simple criteria: if it's not too circular AND not too solid, consider splitting
-    not_too_circular = region.eccentricity < ecc_thresh
-    has_concavities = region.solidity < solidity_thresh
-    significant_concavity = region.convex_area / region.area > 1.5
+    # Multiple criteria - only need ONE to trigger splitting
+    criteria = []
     
-    return not_too_circular and (has_concavities or significant_concavity)
+    # 1. Has significant concavities (convex hull much larger than actual area)
+    if region.area > 0:
+        concavity_ratio = region.convex_area / region.area
+        criteria.append(concavity_ratio > 1.3)  # Lowered threshold
+    
+    # 2. Low solidity (has indentations)
+    criteria.append(region.solidity < solidity_thresh)
+    
+    # 3. Elongated but not extremely so (could be two circles touching)
+    criteria.append(0.3 < region.eccentricity < ecc_thresh)
+    
+    # 4. Large area relative to bounding box but with gaps
+    criteria.append(region.extent < 0.75)
+    
+    # 5. Check aspect ratio of bounding box (elongated shapes often need splitting)
+    bbox_aspect = max(region.bbox[2] - region.bbox[0], region.bbox[3] - region.bbox[1]) / \
+                 min(region.bbox[2] - region.bbox[0], region.bbox[3] - region.bbox[1])
+    criteria.append(bbox_aspect > 1.4)
+    
+    # Trigger splitting if ANY criteria is met (much more aggressive)
+    should_attempt = any(criteria)
+    
+    # Debug info - remove this later
+    if should_attempt:
+        print(f"Should split: concavity={region.convex_area/region.area:.2f}, "
+              f"solidity={region.solidity:.2f}, ecc={region.eccentricity:.2f}, "
+              f"extent={region.extent:.2f}, aspect={bbox_aspect:.2f}")
+    
+    return should_attempt
 
 
 def smart_filter_contained_masks(anns, containment_thresh=0.8):
