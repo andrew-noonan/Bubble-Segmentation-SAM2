@@ -121,89 +121,288 @@ def multi_scale_box_masks(predictor, image, box, point, pad_ratios):
     return masks[best], ious[best], logits_all[best]
 
 
+import cv2
+import numpy as np
+from scipy import ndimage
+from skimage.measure import regionprops, label
+from skimage.morphology import erosion, dilation, disk, remove_small_objects
+from skimage.segmentation import watershed
+from skimage.feature import peak_local_maxima
 
-def watershed_split(mask, peak_filter_size=15, min_region_area=30, max_region_area=None):
-    from scipy import ndimage
-    from skimage.measure import regionprops, label
 
+def improved_watershed_split(mask, peak_filter_size=15, min_region_area=30, max_region_area=None, 
+                           erosion_radius=2, min_peak_distance=10, distance_method='geodesic'):
+    """
+    Improved watershed splitting with better seed detection and preprocessing.
+    
+    Args:
+        mask: Binary mask to split
+        peak_filter_size: Size for local maxima detection
+        min_region_area: Minimum area for valid regions
+        max_region_area: Maximum area for valid regions
+        erosion_radius: Radius for morphological erosion before distance transform
+        min_peak_distance: Minimum distance between peaks
+        distance_method: 'euclidean' or 'geodesic' distance transform
+    """
     if mask.sum() < min_region_area:
         return []
 
-    # Distance transform
-    dist = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5)
-
-    # Local maxima
-    local_max = ndimage.maximum_filter(dist, size=peak_filter_size) == dist
-    local_max &= mask
-    markers, num_peaks = ndimage.label(local_max)
-
-    if num_peaks < 2:
+    # Preprocessing: smooth the mask to reduce noise
+    mask_clean = mask.astype(np.uint8)
+    
+    # Light erosion followed by dilation to smooth boundaries
+    if erosion_radius > 0:
+        struct_elem = disk(erosion_radius)
+        mask_clean = erosion(mask_clean, struct_elem)
+        mask_clean = dilation(mask_clean, struct_elem)
+    
+    # Remove small noise
+    mask_clean = remove_small_objects(mask_clean.astype(bool), min_size=min_region_area//4)
+    
+    if mask_clean.sum() < min_region_area:
         return []
 
-    # Watershed
-    mask_rgb = np.stack([mask * 255]*3, axis=-1).astype(np.uint8)
-    wshed = cv2.watershed(mask_rgb, markers.astype(np.int32))
+    # Better distance transform
+    if distance_method == 'geodesic':
+        # Geodesic distance is better for irregular shapes
+        dist = cv2.distanceTransform(mask_clean.astype(np.uint8), cv2.DIST_L2, 5)
+        # Apply Gaussian smoothing to distance transform
+        dist = cv2.GaussianBlur(dist, (5, 5), 1.0)
+    else:
+        dist = cv2.distanceTransform(mask_clean.astype(np.uint8), cv2.DIST_L2, 5)
 
-    # Extract regions
+    # Improved peak detection using skimage's peak_local_maxima
+    peaks = peak_local_maxima(dist, min_distance=min_peak_distance, 
+                             threshold_abs=dist.max() * 0.3,  # Only consider significant peaks
+                             exclude_border=3)
+    
+    if len(peaks[0]) < 2:  # Need at least 2 peaks to split
+        return []
+
+    # Create markers from peaks
+    markers = np.zeros_like(dist, dtype=np.int32)
+    for i, (y, x) in enumerate(zip(peaks[0], peaks[1])):
+        if mask_clean[y, x]:  # Ensure peak is within mask
+            markers[y, x] = i + 1
+
+    # Apply watershed
+    try:
+        wshed = watershed(-dist, markers, mask=mask_clean)
+    except:
+        # Fallback to OpenCV watershed if skimage fails
+        mask_rgb = np.stack([mask_clean * 255] * 3, axis=-1).astype(np.uint8)
+        wshed = cv2.watershed(mask_rgb, markers)
+
+    # Extract and validate regions
     split_masks = []
     for label_id in np.unique(wshed):
         if label_id <= 0:
             continue
+        
         region = (wshed == label_id)
         area = region.sum()
+        
+        # Area filtering
         if area < min_region_area:
             continue
         if max_region_area is not None and area > max_region_area:
             continue
+            
+        # Shape validation - ensure reasonably circular regions
+        props = regionprops(label(region.astype(int)))
+        if props:
+            # Reject very elongated regions (likely splitting artifacts)
+            if props[0].eccentricity > 0.9:
+                continue
+            # Reject regions with very low solidity (likely fragments)
+            if props[0].solidity < 0.7:
+                continue
+                
         split_masks.append(region.astype(bool))
+    
     return split_masks
 
 
-def should_split(mask, ecc_thresh=0.85, solidity_thresh=0.95):
+def enhanced_should_split(mask, ecc_thresh=0.85, solidity_thresh=0.85, 
+                         area_ratio_thresh=2.0, convexity_thresh=0.8):
+    """
+    Enhanced splitting decision with multiple geometric criteria.
+    
+    Args:
+        mask: Binary mask to evaluate
+        ecc_thresh: Maximum eccentricity (lower = more circular required)
+        solidity_thresh: Minimum solidity (higher = more solid required) 
+        area_ratio_thresh: Maximum ratio of convex hull area to actual area
+        convexity_thresh: Minimum convexity score
+    """
     props = regionprops(label(mask.astype(int)))
     if not props:
         return False
 
     region = props[0]
-    if region.eccentricity > ecc_thresh:
-        return False
-    if region.solidity > solidity_thresh:
-        return False
-    return True
+    
+    # Multi-criteria evaluation
+    criteria = {
+        'eccentricity': region.eccentricity < ecc_thresh,  # Not too elongated
+        'solidity': region.solidity < solidity_thresh,     # Has concavities
+        'area_ratio': region.convex_area / region.area > area_ratio_thresh,  # Significant concavity
+        'extent': region.extent < 0.8,  # Doesn't fill its bounding box well
+    }
+    
+    # Additional convexity check
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        contour = contours[0]
+        hull = cv2.convexHull(contour)
+        hull_area = cv2.contourArea(hull)
+        contour_area = cv2.contourArea(contour)
+        if hull_area > 0:
+            convexity = contour_area / hull_area
+            criteria['convexity'] = convexity < convexity_thresh
+    
+    # Require at least 2 criteria to be met for splitting
+    return sum(criteria.values()) >= 2
 
 
-def filter_contained_masks(anns, containment_thresh=0.9):
+def smart_filter_contained_masks(anns, containment_thresh=0.8, area_similarity_thresh=0.3):
     """
-    Remove masks that are more than `containment_thresh` contained within another.
-
+    Smarter filtering that considers both containment and area similarity.
+    
     Args:
         anns: list of dicts with "segmentation" keys
-        containment_thresh: float in (0, 1)
-
-    Returns:
-        Filtered list of annotations
+        containment_thresh: float in (0, 1) for containment filtering
+        area_similarity_thresh: float in (0, 1) for area similarity filtering
     """
+    if len(anns) <= 1:
+        return anns
+        
     keep = [True] * len(anns)
+    
     for i, ann_i in enumerate(anns):
+        if not keep[i]:
+            continue
+            
         mask_i = ann_i["segmentation"]
         area_i = mask_i.sum()
+        
         for j, ann_j in enumerate(anns):
-            if i == j or not keep[j]:
+            if i >= j or not keep[j]:  # Only check each pair once
                 continue
+                
             mask_j = ann_j["segmentation"]
             area_j = mask_j.sum()
-
+            
             intersection = np.logical_and(mask_i, mask_j).sum()
-
-            # Compute % of i inside j and vice versa
-            containment_i = intersection / area_i
-            containment_j = intersection / area_j
-
-            if containment_i > containment_thresh or containment_j > containment_thresh:
-                # Remove the smaller one
-                if area_i < area_j:
+            union = np.logical_or(mask_i, mask_j).sum()
+            
+            # IoU for very similar masks
+            iou = intersection / union if union > 0 else 0
+            
+            # Containment ratios
+            containment_i_in_j = intersection / area_i if area_i > 0 else 0
+            containment_j_in_i = intersection / area_j if area_j > 0 else 0
+            
+            # Area similarity ratio
+            area_ratio = min(area_i, area_j) / max(area_i, area_j) if max(area_i, area_j) > 0 else 0
+            
+            should_remove = False
+            
+            # High IoU suggests very similar masks
+            if iou > 0.7:
+                should_remove = True
+            # High containment
+            elif containment_i_in_j > containment_thresh or containment_j_in_i > containment_thresh:
+                should_remove = True
+            # Very similar areas with significant overlap
+            elif area_ratio > (1 - area_similarity_thresh) and max(containment_i_in_j, containment_j_in_i) > 0.5:
+                should_remove = True
+            
+            if should_remove:
+                # Keep the one with better shape properties
+                props_i = regionprops(label(mask_i.astype(int)))[0]
+                props_j = regionprops(label(mask_j.astype(int)))[0]
+                
+                # Score based on circularity and solidity
+                score_i = props_i.solidity * (1 - props_i.eccentricity)
+                score_j = props_j.solidity * (1 - props_j.eccentricity)
+                
+                if score_i > score_j:
+                    keep[j] = False
+                else:
                     keep[i] = False
                     break
-                else:
-                    keep[j] = False  # j gets removed
+    
     return [ann for ann, k in zip(anns, keep) if k]
+
+
+def multi_scale_watershed_split(mask, scales=[3, 5, 7], **kwargs):
+    """
+    Apply watershed at multiple scales and combine results.
+    
+    Args:
+        mask: Binary mask to split
+        scales: List of scales (peak_filter_sizes) to try
+        **kwargs: Additional arguments for improved_watershed_split
+    """
+    all_splits = []
+    
+    for scale in scales:
+        splits = improved_watershed_split(mask, peak_filter_size=scale, **kwargs)
+        all_splits.extend(splits)
+    
+    if not all_splits:
+        return []
+    
+    # Convert to annotation format for filtering
+    anns = [{"segmentation": split} for split in all_splits]
+    
+    # Filter overlapping results
+    filtered_anns = smart_filter_contained_masks(anns, containment_thresh=0.7)
+    
+    return [ann["segmentation"] for ann in filtered_anns]
+
+
+def adaptive_bubble_splitter(mask, **kwargs):
+    """
+    Main function that adaptively chooses splitting strategy based on mask properties.
+    """
+    # First check if splitting is needed
+    if not enhanced_should_split(mask, **kwargs):
+        return []
+    
+    # Try improved single-scale watershed first
+    splits = improved_watershed_split(mask)
+    
+    # If that doesn't work well, try multi-scale approach
+    if len(splits) < 2:
+        splits = multi_scale_watershed_split(mask)
+    
+    return splits
+
+
+# Usage example:
+def process_bubbles(masks):
+    """
+    Example usage of the improved functions.
+    """
+    all_split_masks = []
+    
+    for mask in masks:
+        # Check if mask should be split
+        if enhanced_should_split(mask):
+            # Try to split it
+            split_masks = adaptive_bubble_splitter(mask)
+            if split_masks:
+                all_split_masks.extend(split_masks)
+            else:
+                # If splitting failed, keep original
+                all_split_masks.append(mask)
+        else:
+            # No splitting needed
+            all_split_masks.append(mask)
+    
+    # Final filtering to remove duplicates/contained masks
+    anns = [{"segmentation": mask} for mask in all_split_masks]
+    filtered_anns = smart_filter_contained_masks(anns)
+    
+    return [ann["segmentation"] for ann in filtered_anns]
