@@ -53,7 +53,7 @@ def plot_mask_stages(image, masks_dict, props, title_prefix=""):
         props: Final computed properties (e.g., for detected circles)
         title_prefix: Frame title
     """
-    fig, axs = plt.subplots(1, 4, figsize=(18, 5))
+    fig, axs = plt.subplots(1, 4, figsize=(30, 10))
     stages = ["initial", "filtered", "contained", "split"]
     titles = [
         "1. Initial Masks",

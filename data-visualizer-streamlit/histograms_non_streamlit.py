@@ -7,11 +7,11 @@ from scipy.stats import lognorm
 from scipy.integrate import quad
 
 # ---- CONFIGURATION ----
-experiment_dir = r"G:\My Drive\Master's Data Processing\Both Viscosities\50 cSt\15 Degree\180F\0_2 Percent Trial 1\4_5"
+experiment_dir = r"G:\My Drive\Master's Data Processing\Both Viscosities\10 cSt\15 Degree\180F\0_2 Percent Trial 1\4_5"
 json_path = os.path.join(experiment_dir, "per_frame_props.json")
 matlab_path = os.path.join(experiment_dir, "MATLAB Results", "median_image_stats.mat")
 output_dir = r"C:\Users\anoon\Pictures\Publication Figures"  # <-- Set output directory here
-output_name = "diameter_distribution.png"
+output_name = "diameter_distribution_10cst_180_45GPM.png"
 num_bins = 30
 
 # ---- LOAD DATA ----
@@ -69,12 +69,12 @@ axs[0].hist(
     linewidth=0.5,
 )
 axs[0].plot(x, pdf, label="Lognormal PDF", color='black', linewidth=2)
-axs[0].axvline(D32, linestyle='--', color='black', linewidth=2, label=f'D32 = {D32:.1f} µm')
-axs[0].axvline(D30, linestyle=':', color='black', linewidth=2, label=f'D30 = {D30:.1f} µm')
+#axs[0].axvline(D32, linestyle='--', color='black', linewidth=2, label=f'D32 = {D32:.1f} µm')
+axs[0].axvline(D30, linestyle=':', color='black', linewidth=2, label=f'D30 = {D30:.0f} µm')
 #axs[0].set_title("Diameter Distribution (Normal Scale)")
 axs[0].set_xlabel("Diameter (µm)")
 axs[0].set_ylabel("Probability Density")
-axs[0].legend()
+axs[0].legend(loc='upper right')
 legend = axs[0].legend(frameon=True)
 legend.get_frame().set_facecolor('white')   # Solid background
 legend.get_frame().set_alpha(1.0)           # No transparency
@@ -112,8 +112,7 @@ axs[1].plot(xlog, normal_pdf(xlog), color='black', linewidth=2,
             label=f"Normal PDF\n$\\mu = {logmu:.2f},\\ \\sigma = {logsigma:.2f},\\ \\mathrm{{R}}^2 = {r2:.3f}$")
 axs[1].set_xlabel("log(Diameter) (ln µm)")
 axs[1].set_ylabel("Probability Density")
-axs[1].legend()
-legend = axs[1].legend(frameon=True)
+axs[1].legend(loc='upper right')
 legend.get_frame().set_facecolor('white')   # Solid background
 legend.get_frame().set_alpha(1.0)           # No transparency
 legend.get_frame().set_edgecolor('black')   # Thin black stroke

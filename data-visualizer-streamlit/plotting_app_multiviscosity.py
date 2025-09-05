@@ -263,11 +263,15 @@ if page == "Filter Data":
 from scipy.optimize import curve_fit
 
 if page == "Plot Results":
+    if 'filtered_df' not in st.session_state:
+        st.warning("Please go to 'Filter Data' page first to load data.")
+        st.stop()
+    
     filtered_df = st.session_state['filtered_df']
     yin_data = st.session_state.get('yin_data')
     sun_data = st.session_state.get('sun_data')
     # --- Tabs for plotting ---
-    tabs = st.tabs(["Repeatability", "Flow Rate", "Temperature", "Angle", "Reynolds", "Weber", "Capillary", "Universal", "PDFs Fixed Flow", "Universal Capillary", "Capillary w external"])
+    tabs = st.tabs(["Repeatability", "Flow Rate", "Temperature", "Angle", "Reynolds", "Weber", "Capillary", "Universal ReWe", "PDFs Fixed Flow", "Universal ReCa", "Universal WeCa"])
 
     plt.rcParams['font.family'] = 'Times New Roman'
     plt.rcParams['axes.linewidth'] = 1.5  # thicker axes
@@ -510,6 +514,8 @@ if page == "Plot Results":
         # Controls
         ext_data_opt = st.radio("Include External Data?", ["None", "Yin", "Sun", "Both"], index=0, horizontal=True)
         fit_opt = st.radio("Include Fit (d/D = A·Re^b)?", ["No", "Yes"], index=1, horizontal=True)
+        flow_fit_opt = st.radio("Add constant flow rate lines?", ["No", "Yes"], index=0, horizontal=True)
+        legend_opt = st.radio("Legend Style", ["Full", "Simplified"], index=0, horizontal=True)
         scale_opt = st.radio("Scale", ["Linear", "Log"], index=0, horizontal=True)
 
         # Trial-averaging
@@ -550,7 +556,11 @@ if page == "Plot Results":
 
             color = fluid_colors.get(visc, 'gray')
             marker = temp_to_marker[temp]
-            label = f"{visc} {temp}°F"
+            
+            if legend_opt == "Simplified":
+                label = visc if temp == min(temp_list) else None  # Only label first occurrence of each viscosity
+            else:
+                label = f"{visc} {temp}°F"
 
             # Scatter with solid line
             ax.scatter(x, y, marker=marker,s=20,
@@ -571,6 +581,16 @@ if page == "Plot Results":
                             linewidth=1, label=fit_label)
                 except Exception as e:
                     st.warning(f"Fit failed for {label}: {e}")
+        
+        # Add constant flow rate lines
+        if flow_fit_opt == "Yes":
+            flow_rates = sorted(df_combined['FlowRate'].unique())
+            for flow_rate in flow_rates:
+                flow_data = df_combined[df_combined['FlowRate'] == flow_rate].sort_values('Reynolds')
+                if len(flow_data) >= 2:
+                    x_flow = flow_data['Reynolds']
+                    y_flow = flow_data['D_v'] * 1e-6 / flow_data['ThroatDiameter_m']
+                    ax.plot(x_flow, y_flow, 'k:', linewidth=1, alpha=0.7)
 
         # External Data
         if ext_data_opt in ["Yin", "Both"]:
@@ -602,6 +622,8 @@ if page == "Plot Results":
 
         ext_data_opt = st.radio("Include External Data?", ["None", "Yin", "Sun", "Both"], index=0, horizontal=True, key="weber_ext")
         fit_opt = st.radio("Include Fit (d/D = A·We^b)?", ["No", "Yes"], index=1, horizontal=True, key="weber_fit")
+        flow_fit_opt = st.radio("Add constant flow rate lines?", ["No", "Yes"], index=0, horizontal=True, key="weber_flow_fit")
+        legend_opt = st.radio("Legend Style", ["Full", "Simplified"], index=0, horizontal=True, key="weber_legend")
         scale_opt = st.radio("Scale", ["Linear", "Log"], index=0, horizontal=True, key="weber_scale")
 
 
@@ -627,7 +649,8 @@ if page == "Plot Results":
 
         fig, ax = plt.subplots(figsize=(9, 6))
         groups = sorted(df_combined.groupby(['Viscosity_cSt', 'Temp']).groups.keys())
-        color_map = plt.colormaps.get_cmap('tab20').resampled(len(groups))
+        temp_list = sorted(df_combined['Temp'].unique())
+        temp_to_marker = {temp: marker_styles[i % len(marker_styles)] for i, temp in enumerate(temp_list)}
 
         for j, (visc, temp) in enumerate(groups):
             subset = df_combined[(df_combined['Viscosity_cSt'] == visc) & (df_combined['Temp'] == temp)]
@@ -638,9 +661,15 @@ if page == "Plot Results":
 
             x = subset['We_D']
             y = subset['D_v'] * 1e-6 / subset['ThroatDiameter_m']
-            color = color_map(j)
-            label = f"{visc} - {temp}°F"
-            ax.scatter(x, y, label=label, color=color, alpha=0.7)
+            color = fluid_colors.get(visc, 'gray')
+            marker = temp_to_marker[temp]
+            
+            if legend_opt == "Simplified":
+                label = visc if temp == min(temp_list) else None
+            else:
+                label = f"{visc} - {temp}°F"
+            
+            ax.scatter(x, y, label=label, color=color, alpha=0.7, marker=marker, s=20)
 
             if fit_opt == "Yes" and len(x) >= 3:
                 try:
@@ -648,10 +677,22 @@ if page == "Plot Results":
                     popt, _ = curve_fit(model_fn, x, y, maxfev=10000)
                     x_fit = np.linspace(min(x), max(x), 200)
                     y_fit = model_fn(x_fit, *popt)
-                    ax.plot(x_fit, y_fit, '--', color=color,
-                            label=fr"{label} Fit: $A$={popt[0]:.2e}, $b$={popt[1]:.3f}")
+                    fit_style = linestyles[j % len(linestyles)]
+                    fit_label = fr"{label} Fit: $A$={popt[0]:.2e}, $b$={popt[1]:.3f}"
+                    ax.plot(x_fit, y_fit, color=color, linestyle=fit_style,
+                            linewidth=1, label=fit_label)
                 except Exception as e:
                     st.warning(f"Fit failed for {label}: {e}")
+        
+        # Add constant flow rate lines
+        if flow_fit_opt == "Yes":
+            flow_rates = sorted(df_combined['FlowRate'].unique())
+            for flow_rate in flow_rates:
+                flow_data = df_combined[df_combined['FlowRate'] == flow_rate].sort_values('We_D')
+                if len(flow_data) >= 2:
+                    x_flow = flow_data['We_D']
+                    y_flow = flow_data['D_v'] * 1e-6 / flow_data['ThroatDiameter_m']
+                    ax.plot(x_flow, y_flow, 'k:', linewidth=1, alpha=0.7)
 
         if ext_data_opt in ["Yin", "Both"]:
             x = yin_data['We']
@@ -679,6 +720,8 @@ if page == "Plot Results":
 
         ext_data_opt = st.radio("Include External Data?", ["None", "Yin", "Sun", "Both"], index=0, horizontal=True, key="capillary_ext")
         fit_opt = st.radio("Include Fit (d/D = A·Ca^b)?", ["No", "Yes"], index=1, horizontal=True, key="capillary_fit")
+        flow_fit_opt = st.radio("Add constant flow rate lines?", ["No", "Yes"], index=0, horizontal=True, key="capillary_flow_fit")
+        legend_opt = st.radio("Legend Style", ["Full", "Simplified"], index=0, horizontal=True, key="capillary_legend")
         scale_opt = st.radio("Scale", ["Linear", "Log"], index=0, horizontal=True, key="capillary_scale")
 
 
@@ -704,7 +747,8 @@ if page == "Plot Results":
 
         fig, ax = plt.subplots(figsize=(9, 6))
         groups = sorted(df_combined.groupby(['Viscosity_cSt', 'Temp']).groups.keys())
-        color_map = plt.colormaps.get_cmap('tab20').resampled(len(groups))
+        temp_list = sorted(df_combined['Temp'].unique())
+        temp_to_marker = {temp: marker_styles[i % len(marker_styles)] for i, temp in enumerate(temp_list)}
 
         for j, (visc, temp) in enumerate(groups):
             subset = df_combined[(df_combined['Viscosity_cSt'] == visc) & (df_combined['Temp'] == temp)]
@@ -715,9 +759,15 @@ if page == "Plot Results":
 
             x = subset['Ca']
             y = subset['D_v'] * 1e-6 / subset['ThroatDiameter_m']
-            color = color_map(j)
-            label = f"{visc} - {temp}°F"
-            ax.scatter(x, y, label=label, color=color, alpha=0.7)
+            color = fluid_colors.get(visc, 'gray')
+            marker = temp_to_marker[temp]
+            
+            if legend_opt == "Simplified":
+                label = visc if temp == min(temp_list) else None
+            else:
+                label = f"{visc} - {temp}°F"
+            
+            ax.scatter(x, y, label=label, color=color, alpha=0.7, marker=marker, s=20)
 
             if fit_opt == "Yes" and len(x) >= 3:
                 try:
@@ -725,10 +775,22 @@ if page == "Plot Results":
                     popt, _ = curve_fit(model_fn, x, y, maxfev=10000)
                     x_fit = np.linspace(min(x), max(x), 200)
                     y_fit = model_fn(x_fit, *popt)
-                    ax.plot(x_fit, y_fit, '--', color=color,
-                            label=fr"{label} Fit: $A$={popt[0]:.2e}, $b$={popt[1]:.3f}")
+                    fit_style = linestyles[j % len(linestyles)]
+                    fit_label = fr"{label} Fit: $A$={popt[0]:.2e}, $b$={popt[1]:.3f}"
+                    ax.plot(x_fit, y_fit, color=color, linestyle=fit_style,
+                            linewidth=1, label=fit_label)
                 except Exception as e:
                     st.warning(f"Fit failed for {label}: {e}")
+        
+        # Add constant flow rate lines
+        if flow_fit_opt == "Yes":
+            flow_rates = sorted(df_combined['FlowRate'].unique())
+            for flow_rate in flow_rates:
+                flow_data = df_combined[df_combined['FlowRate'] == flow_rate].sort_values('Ca')
+                if len(flow_data) >= 2:
+                    x_flow = flow_data['Ca']
+                    y_flow = flow_data['D_v'] * 1e-6 / flow_data['ThroatDiameter_m']
+                    ax.plot(x_flow, y_flow, 'k:', linewidth=1, alpha=0.7)
 
         if ext_data_opt in ["Yin", "Both"]:
             x = yin_data['Ca']
@@ -751,9 +813,16 @@ if page == "Plot Results":
         st.pyplot(fig)
         plt.close(fig)
 
-    with tabs[7]:
-        st.markdown("### Collapsed Scaling Plot: $d/D = A \cdot Re^a \cdot We^b$")
-
+    def create_universal_plot(x_params, x_labels, y_label, plot_title, tab_name):
+        """Universal function to create collapsed scaling plots"""
+        
+        # Controls
+        ext_data_opt = st.radio("Include External Data?", ["None", "Yin", "Sun", "Both"], index=0, horizontal=True, key=f"{tab_name}_ext")
+        include_in_fit = st.radio("Include external data in fit?", ["No", "Yes"], index=0, horizontal=True, key=f"{tab_name}_fit_ext")
+        air_injection_opt = st.radio("Show air injection diameter?", ["No", "Yes"], index=1, horizontal=True, key=f"{tab_name}_air")
+        scale_opt = st.radio("Scale", ["Linear", "Log"], index=1, horizontal=True, key=f"{tab_name}_scale")
+        
+        # Trial-averaged data preparation
         group_cols = ['Viscosity_cSt', 'Temp', 'FlowRate', 'VenturiAngle', 'AeratedFlow']
         grouped = filtered_df.groupby(group_cols)
 
@@ -772,51 +841,139 @@ if page == "Plot Results":
             st.warning("No trial-averaged SAM data available.")
             st.stop()
 
-        df_fit = pd.DataFrame(trial_avg_records)
-        df_fit = df_fit.dropna(subset=['D_v', 'ThroatDiameter_m', 'Reynolds', 'We_D'])
+        # Prepare fit data
+        all_data = []
+        df_internal = pd.DataFrame(trial_avg_records)
+        required_cols = ['D_v', 'ThroatDiameter_m'] + x_params
+        df_internal = df_internal.dropna(subset=required_cols)
+        
+        # Add internal data
+        for _, row in df_internal.iterrows():
+            all_data.append({
+                x_params[0]: row[x_params[0]],
+                x_params[1]: row[x_params[1]],
+                'D_v': row['D_v'] * 1e-6,  # Convert to meters
+                'ThroatDiameter_m': row['ThroatDiameter_m'],
+                'source': 'Internal',
+                'Viscosity_cSt': row['Viscosity_cSt']
+            })
+        
+        # Add external data if requested for fitting
+        if include_in_fit == "Yes":
+            if ext_data_opt in ["Yin", "Both"]:
+                for _, row in yin_data.iterrows():
+                    param_map = {'Reynolds': 'Re_t', 'We_D': 'We', 'Ca': 'Ca'}
+                    all_data.append({
+                        x_params[0]: row[param_map.get(x_params[0], x_params[0])],
+                        x_params[1]: row[param_map.get(x_params[1], x_params[1])],
+                        'D_v': row['D_v'],
+                        'ThroatDiameter_m': row['ThroatDiameter_m'],
+                        'source': 'Yin et al. 2015',
+                        'Viscosity_cSt': None
+                    })
+            
+            if ext_data_opt in ["Sun", "Both"]:
+                for _, row in sun_data.iterrows():
+                    param_map = {'Reynolds': 'Re', 'We_D': 'We', 'Ca': 'Ca'}
+                    all_data.append({
+                        x_params[0]: row[param_map.get(x_params[0], x_params[0])],
+                        x_params[1]: row[param_map.get(x_params[1], x_params[1])],
+                        'D_v': row['D_v'],
+                        'ThroatDiameter_m': row['ThroatDiameter_m'],
+                        'source': 'Sun et al. 2017',
+                        'Viscosity_cSt': None
+                    })
+        
+        df_combined = pd.DataFrame(all_data)
+        df_combined = df_combined.dropna(subset=['D_v', 'ThroatDiameter_m'] + x_params)
 
-        xdata = df_fit[['Reynolds', 'We_D']].values.T  # shape (2, N)
-        ydata = df_fit['D_v'] * 1e-6 / df_fit['ThroatDiameter_m']  # Normalize to d/D
+        # Fit the model
+        xdata = df_combined[x_params].values.T  # shape (2, N)
+        ydata = df_combined['D_v'] / df_combined['ThroatDiameter_m']  # Normalize to d/D
 
         def model_fn(X, A, a, b):
-            Re, We = X
-            return A * Re**a * We**b
+            return A * X[0]**a * X[1]**b
 
         try:
-            popt, _ = curve_fit(model_fn, xdata, ydata, p0=[1e-3, -0.5, -0.3], maxfev=10000)
+            popt, pcov = curve_fit(model_fn, xdata, ydata, p0=[1e-3, -0.5, -0.3], maxfev=10000)
             A, a, b = popt
+            
+            # Calculate R-squared
+            y_pred = model_fn(xdata, *popt)
+            ss_res = np.sum((ydata - y_pred) ** 2)
+            ss_tot = np.sum((ydata - np.mean(ydata)) ** 2)
+            r_squared = 1 - (ss_res / ss_tot)
+            
             st.success(f"Best Fit: $A$ = {A:.2e}, $a$ = {a:.3f}, $b$ = {b:.3f}")
+            st.info(f"R² = {r_squared:.4f}")
         except Exception as e:
             st.error(f"Fit failed: {e}")
             st.stop()
 
-        # Compute collapsed x-axis values: Re^a * We^b
-        df_fit['CollapseX'] = df_fit['Reynolds']**a * df_fit['We_D']**b
-        df_fit['NormDiameter'] = df_fit['D_v'] * 1e-6 / df_fit['ThroatDiameter_m']
+        # Compute collapsed x-axis values
+        df_combined['CollapseX'] = df_combined[x_params[0]]**a * df_combined[x_params[1]]**b
+        df_combined['NormDiameter'] = df_combined['D_v'] / df_combined['ThroatDiameter_m']
 
+        # Plotting
         fig, ax = plt.subplots(figsize=(9, 6))
-        markers = {10: 'o', 50: 's'}
+        markers = {'10 cSt': 'o', '50 cSt': 's'}
 
-        for visc in sorted(df_fit['Viscosity_cSt'].unique()):
-            subset = df_fit[df_fit['Viscosity_cSt'] == visc]
+        # Plot internal data by viscosity
+        internal_data = df_combined[df_combined['source'] == 'Internal']
+        for visc in sorted(internal_data['Viscosity_cSt'].unique()):
+            subset = internal_data[internal_data['Viscosity_cSt'] == visc]
+            color = fluid_colors.get(visc, 'gray')
+            marker = markers.get(visc, 'x')
             ax.scatter(subset['CollapseX'], subset['NormDiameter'],
-                    label=f"{visc} cSt", alpha=0.7, marker=markers.get(visc, 'x'))
+                    label=visc, alpha=0.7, color=color, marker=marker, s=30)
 
-        # Plot the best-fit curve (over data range)
-        x_fit = np.linspace(df_fit['CollapseX'].min(), df_fit['CollapseX'].max(), 200)
+        # Plot external data if requested for display
+        if ext_data_opt in ["Yin", "Both"]:
+            yin_subset = df_combined[df_combined['source'] == 'Yin et al. 2015']
+            if not yin_subset.empty:
+                ax.scatter(yin_subset['CollapseX'], yin_subset['NormDiameter'],
+                        label="Yin et al. 2015", marker='s', color='tab:green', 
+                        edgecolor='k', alpha=0.7, s=30)
+
+        if ext_data_opt in ["Sun", "Both"]:
+            sun_subset = df_combined[df_combined['source'] == 'Sun et al. 2017']
+            if not sun_subset.empty:
+                ax.scatter(sun_subset['CollapseX'], sun_subset['NormDiameter'],
+                        label="Sun et al. 2017", marker='s', color='tab:orange', 
+                        edgecolor='k', alpha=0.7, s=30)
+
+        # Plot the best-fit curve
+        x_fit = np.linspace(df_combined['CollapseX'].min(), df_combined['CollapseX'].max(), 200)
         y_fit = A * x_fit
-        ax.plot(x_fit, y_fit, 'k--', label="Best Fit: $d/D = A (Re^a We^b)$")
+        ax.plot(x_fit, y_fit, 'k--', linewidth=2, 
+                label=f"Best Fit: $d/D = {A:.2e} \\cdot {x_labels}$")
 
-        ax.set_xlabel(r"$Re^a \cdot We^b$", fontsize=13)
+        # Add air injection diameter reference
+        if air_injection_opt == "Yes":
+            ax.axhline(1/6, color='gray', linestyle=':', linewidth=1, alpha=0.7, label='Air Injection Diameter')
+
+        ax.set_xlabel(f"${x_labels}$", fontsize=13)
         ax.set_ylabel(r"$d_{30} / D_t$", fontsize=13)
-        ax.set_title("Collapsed Plot Using Fitted $Re^a We^b$ Scaling", fontsize=14)
+        ax.set_title(plot_title, fontsize=14)
         ax.grid(True)
-        ax.legend(fontsize=9)
-        ax.set_xscale('log')
-        ax.set_yscale('log')
+        ax.legend(fontsize=9, frameon=True, facecolor='white', edgecolor='black')
+        
+        if scale_opt == "Log":
+            ax.set_xscale('log')
+            ax.set_yscale('log')
 
         st.pyplot(fig)
         plt.close(fig)
+    
+    with tabs[7]:
+        st.markdown("### Universal Scaling: $d/D = A \\cdot Re^a \\cdot We^b$")
+        create_universal_plot(
+            ['Reynolds', 'We_D'], 
+            "Re^a \\cdot We^b", 
+            r"$d_{30} / D_t$", 
+            "Collapsed Plot Using Fitted $Re^a We^b$ Scaling",
+            "rewe"
+        )
     from scipy.stats import lognorm
 
     with tabs[8]:
@@ -892,190 +1049,21 @@ if page == "Plot Results":
         st.pyplot(fig)
 
     with tabs[9]:
-        st.markdown("### Collapsed Scaling Plot: $d/D = A \cdot Re^a \cdot Ca^b$")
-
-        group_cols = ['Viscosity_cSt', 'Temp', 'FlowRate', 'VenturiAngle', 'AeratedFlow']
-        grouped = filtered_df.groupby(group_cols)
-
-        trial_avg_records = []
-        for key, group in grouped:
-            if group['Trial'].nunique() == 2:
-                record = group.mean(numeric_only=True)
-                record['Viscosity_cSt'] = key[0]
-                record['Temp'] = key[1]
-                record['FlowRate'] = key[2]
-                record['VenturiAngle'] = key[3]
-                record['AeratedFlow'] = key[4]
-                trial_avg_records.append(record)
-
-        if not trial_avg_records:
-            st.warning("No trial-averaged SAM data available.")
-            st.stop()
-
-        df_fit = pd.DataFrame(trial_avg_records)
-        df_fit = df_fit.dropna(subset=['D_v', 'ThroatDiameter_m', 'Reynolds', 'Ca'])
-
-        xdata = df_fit[['Reynolds', 'Ca']].values.T  # shape (2, N)
-        ydata = df_fit['D_v'] * 1e-6 / df_fit['ThroatDiameter_m']  # Normalize to d/D
-
-        def model_fn(X, A, a, b):
-            Re, Ca = X
-            return A * Re**a * Ca**b
-
-        try:
-            popt, _ = curve_fit(model_fn, xdata, ydata, p0=[1e-3, -0.5, -0.3], maxfev=10000)
-            A, a, b = popt
-            st.success(f"Best Fit: $A$ = {A:.2e}, $a$ = {a:.3f}, $b$ = {b:.3f}")
-        except Exception as e:
-            st.error(f"Fit failed: {e}")
-            st.stop()
-
-        # Compute collapsed x-axis values: Re^a * We^b
-        df_fit['CollapseX'] = df_fit['Reynolds']**a * df_fit['Ca']**b
-        df_fit['NormDiameter'] = df_fit['D_v'] * 1e-6 / df_fit['ThroatDiameter_m']
-
-        fig, ax = plt.subplots(figsize=(9, 6))
-        markers = {10: 'o', 50: 's'}
-
-        for visc in sorted(df_fit['Viscosity_cSt'].unique()):
-            subset = df_fit[df_fit['Viscosity_cSt'] == visc]
-            ax.scatter(subset['CollapseX'], subset['NormDiameter'],
-                    label=f"{visc} cSt", alpha=0.7, marker=markers.get(visc, 'x'))
-
-        # Plot the best-fit curve (over data range)
-        x_fit = np.linspace(df_fit['CollapseX'].min(), df_fit['CollapseX'].max(), 200)
-        y_fit = A * x_fit
-        ax.plot(x_fit, y_fit, 'k--', label="Best Fit: $d/D = A (Re^a Ca^b)$")
-
-        ax.set_xlabel(r"$Re^a \cdot Ca^b$", fontsize=13)
-        ax.set_ylabel(r"$d_{30} / D_t$", fontsize=13)
-        ax.set_title("Collapsed Plot Using Fitted $Re^a We^b$ Scaling", fontsize=14)
-        ax.grid(True)
-        ax.legend(fontsize=9)
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-        st.pyplot(fig)
-        plt.close(fig)
+        st.markdown("### Universal Scaling: $d/D = A \\cdot Re^a \\cdot Ca^b$")
+        create_universal_plot(
+            ['Reynolds', 'Ca'], 
+            "Re^a \\cdot Ca^b", 
+            r"$d_{30} / D_t$", 
+            "Collapsed Plot Using Fitted $Re^a Ca^b$ Scaling",
+            "reca"
+        )
     with tabs[10]:
-        st.markdown("### Collapsed Scaling Plot with External Data: $d/D = A \cdot Re^a \cdot Ca^b$")
-
-        group_cols = ['Viscosity_cSt', 'Temp', 'FlowRate', 'VenturiAngle', 'AeratedFlow']
-        grouped = filtered_df.groupby(group_cols)
-
-        trial_avg_records = []
-        for key, group in grouped:
-            if group['Trial'].nunique() == 2:
-                record = group.mean(numeric_only=True)
-                record['Viscosity_cSt'] = key[0]
-                record['Temp'] = key[1]
-                record['FlowRate'] = key[2]
-                record['VenturiAngle'] = key[3]
-                record['AeratedFlow'] = key[4]
-                trial_avg_records.append(record)
-
-        if not trial_avg_records:
-            st.warning("No trial-averaged SAM data available.")
-            st.stop()
-
-        df_fit = pd.DataFrame(trial_avg_records)
-        df_fit = df_fit.dropna(subset=['D_v', 'ThroatDiameter_m', 'Reynolds', 'Ca'])
-
-        # Combine internal and external data for fitting
-        all_data = []
-        
-        # Add internal data
-        for _, row in df_fit.iterrows():
-            all_data.append({
-                'Reynolds': row['Reynolds'],
-                'Ca': row['Ca'],
-                'D_v': row['D_v'] * 1e-6,  # Convert to meters
-                'ThroatDiameter_m': row['ThroatDiameter_m'],
-                'source': 'Internal',
-                'Viscosity_cSt': row['Viscosity_cSt']
-            })
-        
-        # Add Yin et al. data
-        for _, row in yin_data.iterrows():
-            all_data.append({
-                'Reynolds': row['Re_t'],
-                'Ca': row['Ca'],
-                'D_v': row['D_v'],  # Assuming already in meters
-                'ThroatDiameter_m': row['ThroatDiameter_m'],
-                'source': 'Yin et al. 2015',
-                'Viscosity_cSt': None
-            })
-        
-        # Add Sun et al. data
-        for _, row in sun_data.iterrows():
-            all_data.append({
-                'Reynolds': row['Re'],
-                'Ca': row['Ca'],
-                'D_v': row['D_v'],  # Assuming already in meters
-                'ThroatDiameter_m': row['ThroatDiameter_m'],
-                'source': 'Sun et al. 2017',
-                'Viscosity_cSt': None
-            })
-        
-        df_combined = pd.DataFrame(all_data)
-        df_combined = df_combined.dropna(subset=['D_v', 'ThroatDiameter_m', 'Reynolds', 'Ca'])
-
-        xdata = df_combined[['Reynolds', 'Ca']].values.T  # shape (2, N)
-        ydata = df_combined['D_v'] / df_combined['ThroatDiameter_m']  # Normalize to d/D
-
-        def model_fn(X, A, a, b):
-            Re, Ca = X
-            return A * Re**a * Ca**b
-
-        try:
-            popt, _ = curve_fit(model_fn, xdata, ydata, p0=[1e-3, -0.5, -0.3], maxfev=10000)
-            A, a, b = popt
-            A = 6.42
-            a = -0.616
-            b = -0.205
-            st.success(f"Best Fit (Combined Data): $A$ = {A:.2e}, $a$ = {a:.3f}, $b$ = {b:.3f}")
-        except Exception as e:
-            st.error(f"Fit failed: {e}")
-            st.stop()
-
-        # Compute collapsed x-axis values: Re^a * Ca^b
-        df_combined['CollapseX'] = df_combined['Reynolds']**a * df_combined['Ca']**b
-        df_combined['NormDiameter'] = df_combined['D_v'] / df_combined['ThroatDiameter_m']
-
-        fig, ax = plt.subplots(figsize=(9, 6))
-        markers = {10: 'o', 50: 's'}
-
-        # Plot internal data by viscosity
-        internal_data = df_combined[df_combined['source'] == 'Internal']
-        for visc in sorted(internal_data['Viscosity_cSt'].unique()):
-            subset = internal_data[internal_data['Viscosity_cSt'] == visc]
-            ax.scatter(subset['CollapseX'], subset['NormDiameter'],
-                    label=f"{visc} cSt", alpha=0.7, marker=markers.get(visc, 'x'))
-
-        # Plot external data
-        yin_subset = df_combined[df_combined['source'] == 'Yin et al. 2015']
-        if not yin_subset.empty:
-            ax.scatter(yin_subset['CollapseX'], yin_subset['NormDiameter'],
-                    label="Yin et al. 2015", marker='s', color='tab:green', 
-                    edgecolor='k', alpha=0.7)
-
-        sun_subset = df_combined[df_combined['source'] == 'Sun et al. 2017']
-        if not sun_subset.empty:
-            ax.scatter(sun_subset['CollapseX'], sun_subset['NormDiameter'],
-                    label="Sun et al. 2017", marker='s', color='tab:orange', 
-                    edgecolor='k', alpha=0.7)
-
-        # Plot the best-fit curve (over data range)
-        x_fit = np.linspace(df_combined['CollapseX'].min(), df_combined['CollapseX'].max(), 200)
-        y_fit = A * x_fit
-        ax.plot(x_fit, y_fit, 'k--', label="Best Fit: $d/D = A (Re^a Ca^b)$")
-
-        ax.set_xlabel(r"$Re^a \cdot Ca^b$", fontsize=13)
-        ax.set_ylabel(r"$d_{30} / D_t$", fontsize=13)
-        ax.set_title("Collapsed Plot with External Data Using Fitted $Re^a Ca^b$ Scaling", fontsize=14)
-        ax.grid(True)
-        ax.legend(fontsize=9)
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-        st.pyplot(fig)
-        plt.close(fig)
+        st.markdown("### Universal Scaling: $d/D = A \\cdot We^a \\cdot Ca^b$")
+        create_universal_plot(
+            ['We_D', 'Ca'], 
+            "We^a \\cdot Ca^b", 
+            r"$d_{30} / D_t$", 
+            "Collapsed Plot Using Fitted $We^a Ca^b$ Scaling",
+            "weca"
+        )
         
